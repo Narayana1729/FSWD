@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import {
   User,
@@ -23,6 +23,9 @@ import {
   ChevronRight,
   Thermometer,
   HeartPulse,
+  RefreshCw,
+  AlertCircle,
+  FolderOpen,
 } from "lucide-react";
 import { Patient, EMRTimelineEvent } from "@/lib/hms-data";
 
@@ -94,175 +97,357 @@ function SpotlightCard({
   );
 }
 
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("hms_auth_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+interface TimelineItem extends EMRTimelineEvent {
+  isoTime?: number;
+}
+
 export function EMRPatient360View({
   patientId,
   patients,
   onSelectPatient,
 }: EMRPatient360ViewProps) {
-  const patient = patients.find((p) => p.id === patientId) || patients[0];
-  const [activeFilter, setActiveFilter] = useState<string>("All");
-  const [selectedEvent, setSelectedEvent] = useState<EMRTimelineEvent | null>(null);
+  const selectedBasicPatient =
+    patients.find((p) => p.id === patientId || (p as any).mrn === patientId) ||
+    patients[0];
 
-  // Mock Timeline Events tailored for selected patient
-  const mockTimeline: EMRTimelineEvent[] = [
-    {
-      id: "EVT-101",
-      patientId: patient.id,
-      timestamp: "2026-08-15 09:30 AM",
-      type: "Admission",
-      title: patient.ward
-        ? `Admitted to ${patient.ward} Ward (${patient.bedNo || "Bed Assigned"})`
-        : "OPD Consultation & Clinical Intake Completed",
-      doctorName: typeof (patient as any).doctor === "object" ? (patient as any).doctor?.name : (patient as any).doctor || "Dr. Dhanvantari",
-      department: typeof (patient as any).department === "object" ? (patient as any).department?.name : (patient as any).department || "Cardiology",
-      summary: `${patient.name} presented for comprehensive health evaluation. Vitals recorded, preliminary diagnostic panel ordered.`,
-      details: {
-        ward: patient.ward || "Outpatient",
-        bedNo: patient.bedNo || "N/A",
-        vitalsAtAdmission: "BP: 120/80, Pulse: 72, SpO2: 99%, Temp: 98.6°F",
-      },
-    },
-    {
-      id: "EVT-102-A",
-      patientId: patient.id,
-      timestamp: "2026-08-17 09:00 AM",
-      type: "Imaging",
-      title: "Radiology Scan Ordered — CT Coronary Angiography (RAD-702)",
-      doctorName: "Dr. Dhanvantari",
-      department: "Cardiovascular Surgery",
-      summary: "High-resolution 64-slice CT scan requested for coronary artery lumen evaluation. Status: Scheduled.",
-      details: {
-        scanType: "CT Scan",
-        modality: "64-Slice CT",
-        status: "Scheduled",
-      },
-    },
-    {
-      id: "EVT-102-B",
-      patientId: patient.id,
-      timestamp: "2026-08-17 09:30 AM",
-      type: "Imaging",
-      title: "DICOM Scan Acquired — Image Frame Link Verified",
-      doctorName: "Rad-Tech Jayant",
-      department: "Radiology & PACS Workstation",
-      summary: "Coronary lumen acquisition complete. DICOM Series #1 (128 Slices) captured and uploaded to PACS workstation. Status: Acquired.",
-      details: {
-        scanType: "CT Scan",
-        modality: "DICOM PACS Workstation",
-        status: "Acquired",
-      },
-    },
-    {
-      id: "EVT-102-C",
-      patientId: patient.id,
-      timestamp: "2026-08-17 10:00 AM",
-      type: "Imaging",
-      title: "Radiologist Report Finalized & Signed Off",
-      doctorName: "Dr. Jivaka",
-      department: "Radiology & PACS Workstation",
-      summary: "Diagnostic Impression: Patent coronary arteries without hemodynamically significant stenosis. Clear pericardial cavity. Status: Finalized.",
-      details: {
-        impression: "Normal 64-slice CT Coronary Angiogram",
-        reportedBy: "Dr. Jivaka",
-        status: "Finalized",
-        billing: "₹3,500 Billed to Invoice #INV-88213",
-      },
-    },
-    {
-      id: "EVT-103",
-      patientId: patient.id,
-      timestamp: "2026-08-15 10:45 AM",
-      type: "Lab Report",
-      title: "Comprehensive Metabolic & Lipid Panel",
-      doctorName: patient.doctor || "Dr. Charaka",
-      department: "Central Pathology Lab",
-      summary: "Hemoglobin: 14.8 g/dL. Fasting Glucose: 92 mg/dL. Electrolytes: Stable. Lipid profile optimal.",
-      details: {
-        hgb: "14.8 g/dL",
-        glucose: "92 mg/dL",
-        potassium: "4.2 mEq/L",
-        status: "Verified",
-      },
-    },
-    {
-      id: "EVT-104",
-      patientId: patient.id,
-      timestamp: "2026-08-15 11:15 AM",
-      type: "Prescription",
-      title: "Care Protocol & Maintenance Regimen",
-      doctorName: patient.doctor || "Dr. Nagarjuna",
-      department: "Clinical Pharmacy",
-      summary: "Preventive supplementation and post-consultation health routine dispensed under clinical supervision.",
-      details: {
-        rxList: ["Multivitamin Complex 1 Tab OD", "Hydration Protocol 2.5L/day"],
-      },
-    },
-    // ── Emergency Episode Timeline Events ──
-    {
-      id: "EVT-EMG-01",
-      patientId: patient.id,
-      timestamp: "2026-08-17 03:15 PM",
-      type: "Emergency",
-      title: "Emergency Triage — RED Severity (Resuscitation)",
-      doctorName: "Dr. Ashwini Kumaras",
-      department: "Emergency Department",
-      summary: `${patient.name} registered as RED triage emergency case. Chief complaint: Severe polytrauma, hypotension. Vitals: BP 110/70, HR 102, SpO2 96%.`,
-      details: {
-        severity: "RED",
-        triageFee: "₹2,500",
-        traumaBay: "Bay 2 (Trauma)",
-        status: "Triaged",
-      },
-    },
-    {
-      id: "EVT-EMG-02",
-      patientId: patient.id,
-      timestamp: "2026-08-17 03:18 PM",
-      type: "Emergency",
-      title: "Ambulance Dispatched — AMB-01 (ETA 8 Mins)",
-      doctorName: "Dispatch Control",
-      department: "Ambulance Network",
-      summary: `Advanced Life Support ambulance AMB-01 dispatched to emergency scene. Driver: Rajkumar Reddy. GPS tracking active.`,
-      details: {
-        ambulanceId: "AMB-01",
-        driverName: "Rajkumar Reddy",
-        etaMins: 8,
-        status: "Dispatched",
-      },
-    },
-    {
-      id: "EVT-EMG-03",
-      patientId: patient.id,
-      timestamp: "2026-08-17 03:26 PM",
-      type: "Emergency",
-      title: "ER Bay Stabilization — Trauma Bay 2",
-      doctorName: "Dr. Ashwini Kumaras",
-      department: "Emergency Department",
-      summary: "Patient stabilized in Trauma Bay 2. IV access established, crystalloid resuscitation initiated. Vitals trending toward hemodynamic stability.",
-      details: {
-        intervention: "IV Crystalloid Resuscitation",
-        bay: "Trauma Bay 2",
-        status: "Stabilized",
-      },
-    },
-    {
-      id: "EVT-EMG-04",
-      patientId: patient.id,
-      timestamp: "2026-08-17 03:40 PM",
-      type: "Emergency",
-      title: "Admitted to ICU Bed #3 — Ambulance Released",
-      doctorName: "Dr. Ashwini Kumaras",
-      department: "ICU / Emergency",
-      summary: `Atomic admission transaction completed. Patient transferred to ICU Bed #3. Ambulance AMB-01 released to Available. Emergency RED Triage Fee ₹2,500 billed to invoice.`,
-      details: {
-        bedNo: "ICU-03",
-        triageFee: "₹2,500",
-        ambulanceReleased: true,
-        invoiceStatus: "Outstanding",
-        status: "Admitted",
-      },
-    },
-  ];
+  const [livePatient, setLivePatient] = useState<any>(selectedBasicPatient);
+  const [timelineEvents, setTimelineEvents] = useState<TimelineItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeFilter, setActiveFilter] = useState<string>("All");
+  const [selectedEvent, setSelectedEvent] = useState<TimelineItem | null>(null);
+
+  const fetchPatientHistory = useCallback(async (pId: string) => {
+    if (!pId) return;
+    try {
+      setLoading(true);
+      setError(null);
+
+      const res = await fetch(`/api/patients/${pId}`, {
+        headers: getAuthHeaders(),
+        credentials: "same-origin",
+      });
+
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error("Patient record not found on server.");
+        }
+        if (res.status === 401 || res.status === 403) {
+          throw new Error("Unauthorized to access patient medical records.");
+        }
+        throw new Error(`Failed to load patient history (HTTP ${res.status}).`);
+      }
+
+      const json = await res.json();
+      const p = json.patient;
+      setLivePatient(p);
+
+      const events: TimelineItem[] = [];
+
+      // 1. Admissions & Discharges
+      if (Array.isArray(p.admissions)) {
+        p.admissions.forEach((adm: any) => {
+          const admDate = new Date(adm.admittedAt);
+          events.push({
+            id: `ADM-${adm.id}`,
+            patientId: p.id,
+            timestamp: admDate.toLocaleString("en-US", {
+              dateStyle: "medium",
+              timeStyle: "short",
+            }),
+            isoTime: admDate.getTime(),
+            type: "Admission",
+            title: `Inpatient Admission — ${adm.bed?.room?.ward?.name || "General"} Ward (${adm.bed?.bedNo || "Bed Assigned"})`,
+            doctorName: adm.attendingDoctor || "Attending Physician",
+            department: adm.bed?.room?.ward?.name ? `${adm.bed.room.ward.name} Ward` : "Inpatient IPD",
+            summary: adm.reason || "Patient admitted for clinical observation and therapy.",
+            details: {
+              status: adm.status,
+              ward: adm.bed?.room?.ward?.name || "General",
+              roomNo: adm.bed?.room?.roomNo || "—",
+              bedNo: adm.bed?.bedNo || "—",
+              dailyRate: adm.bed?.dailyRate ? `₹${adm.bed.dailyRate}` : "—",
+              reason: adm.reason,
+              admittedAt: adm.admittedAt,
+            },
+          });
+
+          if (adm.dischargedAt || adm.status === "Discharged") {
+            const disDate = new Date(adm.dischargedAt || adm.updatedAt);
+            events.push({
+              id: `DIS-${adm.id}`,
+              patientId: p.id,
+              timestamp: disDate.toLocaleString("en-US", {
+                dateStyle: "medium",
+                timeStyle: "short",
+              }),
+              isoTime: disDate.getTime(),
+              type: "Discharge",
+              title: `Discharge Finalized — ${adm.bed?.room?.ward?.name || "Inpatient"}`,
+              doctorName: adm.attendingDoctor || "Attending Physician",
+              department: adm.bed?.room?.ward?.name ? `${adm.bed.room.ward.name} Ward` : "Inpatient IPD",
+              summary: adm.dischargeSummary || "Patient discharged in stable hemodynamic state.",
+              details: {
+                status: adm.status,
+                dischargeSummary: adm.dischargeSummary || "Discharged with instructions",
+                dischargedAt: adm.dischargedAt,
+              },
+            });
+          }
+        });
+      }
+
+      // 2. Scheduled Appointments
+      if (Array.isArray(p.appointments)) {
+        p.appointments.forEach((apt: any) => {
+          const aptDate = apt.appointmentDate
+            ? new Date(apt.appointmentTime ? `${apt.appointmentDate} ${apt.appointmentTime}` : apt.appointmentDate)
+            : new Date(apt.createdAt);
+          events.push({
+            id: `APT-${apt.id}`,
+            patientId: p.id,
+            timestamp: isNaN(aptDate.getTime())
+              ? apt.appointmentDate
+              : aptDate.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+            isoTime: isNaN(aptDate.getTime()) ? 0 : aptDate.getTime(),
+            type: "Visits",
+            title: `Appointment: ${apt.type || "OPD"} (${apt.status})`,
+            doctorName: apt.doctor?.name || "Attending Doctor",
+            department: apt.department?.name || apt.doctor?.specialization || "Outpatient Care",
+            summary: apt.reason || `Scheduled ${apt.type || "Walk-in"} appointment. Queue #${apt.tokenNo || apt.queueNumber || "—"}.`,
+            details: {
+              tokenNo: apt.tokenNo,
+              queueNumber: apt.queueNumber,
+              status: apt.status,
+              type: apt.type,
+              reason: apt.reason,
+              notes: apt.notes,
+            },
+          });
+        });
+      }
+
+      // 3. Clinical Visits & Consultations & Prescriptions
+      if (Array.isArray(p.visits)) {
+        p.visits.forEach((vst: any) => {
+          if (Array.isArray(vst.consultations)) {
+            vst.consultations.forEach((cns: any) => {
+              const cnsDate = new Date(cns.createdAt);
+              events.push({
+                id: `CNS-${cns.id}`,
+                patientId: p.id,
+                timestamp: cnsDate.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+                isoTime: cnsDate.getTime(),
+                type: "Diagnosis",
+                title: `Clinical Consultation: ${cns.diagnosis || "Medical Assessment"}`,
+                doctorName: cns.doctor?.name || vst.doctor?.name || "Physician",
+                department: vst.doctor?.specialization || "Clinical OPD",
+                summary: cns.notes || `Chief Complaint: ${vst.chiefComplaint || "Unspecified"}. Assessment complete.`,
+                details: {
+                  diagnosis: cns.diagnosis,
+                  clinicalNotes: cns.notes,
+                  followUpDate: cns.followUpDate,
+                  chiefComplaint: vst.chiefComplaint,
+                  vitals: vst.vitals,
+                },
+              });
+            });
+          }
+
+          if (Array.isArray(vst.prescriptions)) {
+            vst.prescriptions.forEach((rx: any) => {
+              const rxDate = new Date(rx.createdAt);
+              const itemsStr = (rx.items || [])
+                .map((it: any) => `${it.medicineName} (${it.dosage}, ${it.frequency})`)
+                .join(", ");
+              events.push({
+                id: `RX-${rx.id}`,
+                patientId: p.id,
+                timestamp: rxDate.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+                isoTime: rxDate.getTime(),
+                type: "Prescription",
+                title: `Prescription Order (${rx.status})`,
+                doctorName: rx.doctor?.name || "Physician",
+                department: "Clinical Pharmacy",
+                summary: itemsStr || rx.notes || "Medications prescribed for clinical regimen.",
+                details: {
+                  status: rx.status,
+                  notes: rx.notes,
+                  medications: rx.items,
+                },
+              });
+            });
+          }
+        });
+      }
+
+      // 4. Lab Orders & Verified Results
+      if (Array.isArray(p.labOrders)) {
+        p.labOrders.forEach((lab: any) => {
+          const labDate = new Date(lab.orderedAt);
+          const resultsSummary =
+            Array.isArray(lab.results) && lab.results.length > 0
+              ? `Results: ${lab.results.map((r: any) => `${r.parameterName}: ${r.value} ${r.unit || ""}`).join("; ")}`
+              : `Status: ${lab.status}. Priority: ${lab.priority}. Specimen analysis pending/in-progress.`;
+
+          events.push({
+            id: `LAB-${lab.id}`,
+            patientId: p.id,
+            timestamp: labDate.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+            isoTime: labDate.getTime(),
+            type: "Lab Report",
+            title: `Pathology Panel: ${lab.testName} (${lab.orderNo})`,
+            doctorName: lab.doctor?.name || "Pathologist",
+            department: "Central Pathology Laboratory",
+            summary: resultsSummary,
+            details: {
+              orderNo: lab.orderNo,
+              status: lab.status,
+              priority: lab.priority,
+              results: lab.results,
+            },
+          });
+        });
+      }
+
+      // 5. Radiology & Imaging Reports
+      if (Array.isArray(p.radiologyOrders)) {
+        p.radiologyOrders.forEach((rad: any) => {
+          const radDate = new Date(rad.createdAt);
+          const impression =
+            rad.report?.impression || rad.report?.findings || `Diagnostic ${rad.modality} requested. Urgency: ${rad.urgency}.`;
+
+          events.push({
+            id: `RAD-${rad.id}`,
+            patientId: p.id,
+            timestamp: radDate.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+            isoTime: radDate.getTime(),
+            type: "Imaging",
+            title: `Imaging: ${rad.modality} ${rad.bodyPart} (${rad.orderNo})`,
+            doctorName: rad.doctor?.name || "Radiologist",
+            department: "Radiology & PACS Workstation",
+            summary: impression,
+            details: {
+              orderNo: rad.orderNo,
+              modality: rad.modality,
+              bodyPart: rad.bodyPart,
+              urgency: rad.urgency,
+              status: rad.status,
+              report: rad.report,
+            },
+          });
+        });
+      }
+
+      // 6. Surgical Procedures
+      if (Array.isArray(p.surgeries)) {
+        p.surgeries.forEach((srg: any) => {
+          const srgDate = new Date(srg.createdAt || Date.now());
+          events.push({
+            id: `SRG-${srg.id}`,
+            patientId: p.id,
+            timestamp: srgDate.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+            isoTime: srgDate.getTime(),
+            type: "Procedure",
+            title: `Surgical Procedure: ${srg.procedure} (${srg.surgeryId})`,
+            doctorName: srg.leadSurgeon?.name || "Lead Surgeon",
+            department: srg.ot?.name ? `Operation Theatre (${srg.ot.name})` : "Surgical Suite",
+            summary: `Status: ${srg.status}. Window: ${srg.startTime} - ${srg.endTime}. Anesthesia: ${srg.anesthetist || "Clinical"}.`,
+            details: {
+              surgeryId: srg.surgeryId,
+              status: srg.status,
+              ot: srg.ot?.name,
+              startTime: srg.startTime,
+              endTime: srg.endTime,
+              leadSurgeon: srg.leadSurgeon?.name,
+              anesthetist: srg.anesthetist,
+              scrubNurse: srg.scrubNurse,
+            },
+          });
+        });
+      }
+
+      // 7. Emergency Triage Episodes
+      if (Array.isArray(p.emergencyCases)) {
+        p.emergencyCases.forEach((emg: any) => {
+          const emgDate = new Date(emg.createdAt);
+          events.push({
+            id: `EMG-${emg.id}`,
+            patientId: p.id,
+            timestamp: emgDate.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+            isoTime: emgDate.getTime(),
+            type: "Emergency",
+            title: `Emergency Triage: ${emg.severity} Severity (${emg.caseId})`,
+            doctorName: emg.assignedDoctor || "Emergency Physician",
+            department: "Emergency Department",
+            summary: `Chief Complaint: ${emg.chiefComplaint}. Trauma Bay: ${emg.traumaBay}, Bed: ${emg.bedNo}.`,
+            details: {
+              caseId: emg.caseId,
+              severity: emg.severity,
+              chiefComplaint: emg.chiefComplaint,
+              traumaBay: emg.traumaBay,
+              bedNo: emg.bedNo,
+              status: emg.status,
+              vitals: emg.vitalsJson ? JSON.parse(emg.vitalsJson) : null,
+            },
+          });
+        });
+      }
+
+      // 8. Invoices & Billing
+      if (Array.isArray(p.invoices)) {
+        p.invoices.forEach((inv: any) => {
+          const invDate = new Date(inv.createdAt || inv.billDate);
+          const paid = (inv.payments || []).reduce((s: number, pm: any) => s + pm.amount, 0);
+          events.push({
+            id: `INV-${inv.id}`,
+            patientId: p.id,
+            timestamp: invDate.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+            isoTime: invDate.getTime(),
+            type: "Billing",
+            title: `Hospital Invoice #${inv.invoiceNo} (${inv.paymentStatus})`,
+            doctorName: "Finance & Accounts",
+            department: "Hospital Billing",
+            summary: `Final Amount: ₹${inv.finalAmount.toFixed(2)} (Paid: ₹${paid.toFixed(2)}, Due: ₹${Math.max(0, inv.finalAmount - paid).toFixed(2)}).`,
+            details: {
+              invoiceNo: inv.invoiceNo,
+              subtotal: inv.subtotal,
+              insuranceCovered: inv.insuranceCovered,
+              coPayAmount: inv.coPayAmount,
+              finalAmount: inv.finalAmount,
+              paymentStatus: inv.paymentStatus,
+              items: inv.items,
+              payments: inv.payments,
+            },
+          });
+        });
+      }
+
+      // Sort chronologically descending
+      events.sort((a, b) => (b.isoTime || 0) - (a.isoTime || 0));
+      setTimelineEvents(events);
+      setSelectedEvent(events[0] || null);
+    } catch (err: any) {
+      console.error("Error fetching patient history:", err);
+      setError(err.message || "Failed to retrieve patient medical records.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const targetId = selectedBasicPatient?.id || patientId;
+    fetchPatientHistory(targetId);
+  }, [patientId, selectedBasicPatient?.id, fetchPatientHistory]);
 
   const filterCategories = [
     "All",
@@ -273,18 +458,22 @@ export function EMRPatient360View({
     "Imaging",
     "Procedure",
     "Admission",
+    "Discharge",
     "Emergency",
+    "Billing",
   ];
 
-  const filteredEvents = mockTimeline.filter((evt) => {
+  const filteredEvents = timelineEvents.filter((evt) => {
     if (activeFilter === "All") return true;
     return evt.type.toLowerCase().includes(activeFilter.toLowerCase());
   });
 
+  const displayPatient = livePatient || selectedBasicPatient;
+
   return (
-    <div className="space-y-8 text-[#111]">
+    <div className="space-y-8 text-[#111] font-sans">
       {/* ═══════════════════════════════════════════════════════════════════════ */}
-      {/* HERO SECTION: PATIENT 360 & OPD MANAGEMENT 3D SHOWCASE BANNER         */}
+      {/* HERO SECTION: PATIENT 360 & CLINICAL PROFILE BANNER                   */}
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       <div
         className="rounded-3xl p-6 sm:p-8 lg:p-10 relative overflow-hidden"
@@ -296,7 +485,7 @@ export function EMRPatient360View({
             <div className="flex items-center gap-3">
               <Tag>PATIENTS &amp; EMR 360°</Tag>
               <span className="px-3 py-0.5 rounded-full text-xs font-bold bg-[#111] text-white shadow-xs">
-                {patient.status}
+                {displayPatient?.status || "Active"}
               </span>
             </div>
 
@@ -304,24 +493,27 @@ export function EMRPatient360View({
               className="text-3xl sm:text-4xl lg:text-5xl font-light text-[#111] leading-[1.08] tracking-tight"
               style={{ fontFamily: '"IBM Plex Sans", sans-serif' }}
             >
-              Patient 360 &amp;<br />OPD Management.
+              {displayPatient?.name || "Patient Profile"}
+              <span className="block text-xl sm:text-2xl font-mono text-black/50 mt-1">
+                MRN: {displayPatient?.mrn || displayPatient?.id} • {displayPatient?.age} Yrs / {displayPatient?.gender}
+              </span>
             </h1>
 
             <p className="text-sm text-black/50 font-light max-w-xl leading-relaxed">
-              Comprehensive patient directory, smart triage, token queues, electronic medical records, and automated discharge summaries.
+              Unified electronic medical record timeline with real-time appointments, inpatient admissions, laboratory findings, radiology reports, prescriptions, and financial ledgers.
             </p>
 
             {/* Quick Stat Highlights */}
-            <div className="flex items-center gap-8 pt-2">
+            <div className="flex items-center gap-6 pt-2">
               <div>
                 <div
                   className="text-3xl font-light tracking-tight text-[#111]"
                   style={{ fontFamily: '"IBM Plex Sans", sans-serif' }}
                 >
-                  4.8M
+                  {timelineEvents.length}
                 </div>
                 <div className="text-[10px] text-black/40 tracking-widest uppercase font-pixel mt-0.5">
-                  Records
+                  Clinical Events
                 </div>
               </div>
 
@@ -329,13 +521,13 @@ export function EMRPatient360View({
 
               <div>
                 <div
-                  className="text-3xl font-light tracking-tight text-[#111]"
+                  className="text-3xl font-light tracking-tight text-emerald-800"
                   style={{ fontFamily: '"IBM Plex Sans", sans-serif' }}
                 >
-                  0.4s
+                  {displayPatient?.bloodGroup || "—"}
                 </div>
                 <div className="text-[10px] text-black/40 tracking-widest uppercase font-pixel mt-0.5">
-                  Retrieval
+                  Blood Group
                 </div>
               </div>
 
@@ -343,30 +535,38 @@ export function EMRPatient360View({
 
               {/* Patient Switcher Dropdown */}
               <div className="flex items-center gap-2 bg-white/80 p-1.5 rounded-2xl border border-black/10 shadow-xs">
-                <span className="text-xs text-[#111] font-semibold pl-2">Select:</span>
+                <span className="text-xs text-[#111] font-semibold pl-2">Patient:</span>
                 <select
-                  value={patient.id}
+                  value={displayPatient?.id || patientId}
                   onChange={(e) => onSelectPatient(e.target.value)}
                   className="bg-white text-[#111] text-xs font-bold border border-black/10 outline-none py-1 px-3 rounded-xl cursor-pointer"
                 >
                   {patients.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} ({p.id})
+                      {p.name} ({p.mrn || p.id})
                     </option>
                   ))}
                 </select>
+                <button
+                  onClick={() => fetchPatientHistory(displayPatient?.id || patientId)}
+                  disabled={loading}
+                  title="Refresh Timeline"
+                  className="p-1 text-black/60 hover:text-black disabled:opacity-40"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+                </button>
               </div>
             </div>
           </div>
 
-          {/* Right Column: High-Fidelity 3D Glass Profile Stand & Hourglass */}
-          <div className="w-full lg:w-[480px] shrink-0 relative flex items-center justify-center">
+          {/* Right Column: 3D Illustration Stand */}
+          <div className="w-full lg:w-[420px] shrink-0 relative flex items-center justify-center">
             <div className="relative group rounded-2xl overflow-hidden p-2 transition-transform duration-500 hover:scale-[1.02]">
               <Image
                 src="/images/patient-360-3d-full.png"
                 alt="3D Glass Patient 360 Profile Card"
-                width={480}
-                height={320}
+                width={420}
+                height={280}
                 className="w-full h-auto object-contain drop-shadow-2xl rounded-xl"
                 priority
               />
@@ -374,22 +574,28 @@ export function EMRPatient360View({
           </div>
         </div>
 
-        {/* Patient Key Vitals Ribbon */}
+        {/* Patient Key Medical Profile Ribbon */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-6 border-t border-black/10 text-xs">
           <div className="bg-white/80 p-3.5 rounded-2xl border border-black/10">
             <div className="text-black/40 text-[10px] uppercase font-bold tracking-wider font-pixel">
               Insurance Policy
             </div>
-            <div className="font-bold text-[#111] mt-0.5">{patient.insurance?.provider || "Not on File"}</div>
-            <div className="text-[10px] text-black/50 font-mono">{patient.insurance?.policyNo || "—"}</div>
+            <div className="font-bold text-[#111] mt-0.5">
+              {displayPatient?.insurance?.provider || "Self Pay / Cash"}
+            </div>
+            <div className="text-[10px] text-black/50 font-mono">
+              {displayPatient?.insurance?.policyNo ? `Policy #${displayPatient.insurance.policyNo}` : "No policy on file"}
+            </div>
           </div>
 
           <div className="bg-white/80 p-3.5 rounded-2xl border border-black/10">
             <div className="text-black/40 text-[10px] uppercase font-bold tracking-wider font-pixel">
-              Known Allergies
+              Documented Allergies
             </div>
-            <div className="font-bold text-rose-700 mt-0.5">
-              {(patient.allergies || []).join(", ") || "None Reported"}
+            <div className="font-bold text-rose-700 mt-0.5 truncate">
+              {Array.isArray(displayPatient?.allergies) && displayPatient.allergies.length > 0
+                ? displayPatient.allergies.join(", ")
+                : "None Reported"}
             </div>
             <div className="text-[10px] text-black/50">Verified Clinical Safety</div>
           </div>
@@ -398,20 +604,28 @@ export function EMRPatient360View({
             <div className="text-black/40 text-[10px] uppercase font-bold tracking-wider font-pixel">
               Emergency Contact
             </div>
-            <div className="font-bold text-[#111] mt-0.5">
-              {patient.emergencyContact?.name || "Not Recorded"} ({patient.emergencyContact?.relation || "—"})
+            <div className="font-bold text-[#111] mt-0.5 truncate">
+              {displayPatient?.emergencyContact?.name
+                ? `${displayPatient.emergencyContact.name} (${displayPatient.emergencyContact.relation || "Kin"})`
+                : "Not Recorded"}
             </div>
-            <div className="text-[10px] text-black/50 font-mono">{patient.emergencyContact?.phone || "—"}</div>
+            <div className="text-[10px] text-black/50 font-mono">
+              {displayPatient?.emergencyContact?.phone || "—"}
+            </div>
           </div>
 
           <div className="bg-white/80 p-3.5 rounded-2xl border border-black/10">
             <div className="text-black/40 text-[10px] uppercase font-bold tracking-wider font-pixel">
-              Next Scheduled Appointment
+              Attending Physician
             </div>
-            <div className="font-bold text-emerald-800 mt-0.5">
-              29 Aug 2026 • 10:30 AM
+            <div className="font-bold text-emerald-800 mt-0.5 truncate">
+              {typeof displayPatient?.doctor === "object"
+                ? displayPatient?.doctor?.name
+                : displayPatient?.doctor || "Dr. Charaka"}
             </div>
-            <div className="text-[10px] text-black/50">{patient.doctor}</div>
+            <div className="text-[10px] text-black/50">
+              {displayPatient?.department?.name || displayPatient?.department || "General Medicine"}
+            </div>
           </div>
         </div>
       </div>
@@ -462,55 +676,118 @@ export function EMRPatient360View({
               </h3>
             </div>
             <span className="text-xs text-black/40 font-mono">
-              {filteredEvents.length} Events Logged
+              {filteredEvents.length} Verified Events
             </span>
           </div>
 
-          <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-black/10">
-            {filteredEvents.map((evt) => (
-              <div
-                key={evt.id}
-                onClick={() => setSelectedEvent(evt)}
-                className={`relative group cursor-pointer p-4 rounded-2xl border transition-all ${
-                  selectedEvent?.id === evt.id
-                    ? "bg-white border-black/30 shadow-md scale-[1.01]"
-                    : "bg-white/70 border-black/10 hover:bg-white hover:border-black/20"
-                }`}
-              >
-                {/* Timeline Dot */}
-                <div className={`absolute -left-6 top-5 transform -translate-x-1/2 w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center shadow-sm ${
-                  evt.type === "Emergency" ? "border-rose-600" : "border-[#111]"
-                }`}>
-                  <div className={`w-1.5 h-1.5 rounded-full ${
-                    evt.type === "Emergency" ? "bg-rose-600 animate-pulse" : "bg-[#111]"
-                  }`} />
-                </div>
-
-                <div className="flex items-center justify-between mb-1">
-                  <span className={`font-pixel text-[9px] tracking-widest px-2.5 py-0.5 rounded-md uppercase font-bold ${
-                    evt.type === "Emergency"
-                      ? "bg-rose-100 text-rose-800"
-                      : "bg-black/10 text-black/80"
-                  }`}>
-                    {evt.type}
-                  </span>
-                  <span className="text-[11px] font-mono text-black/40 font-medium">
-                    {evt.timestamp}
-                  </span>
-                </div>
-
-                <h4 className="text-sm font-bold text-[#111] mt-1">{evt.title}</h4>
-                <p className="text-xs text-black/60 mt-1 leading-relaxed">{evt.summary}</p>
-
-                <div className="mt-3 pt-2 border-t border-black/10 flex items-center justify-between text-[11px] text-black/50 font-medium">
-                  <span>Doc: {evt.doctorName}</span>
-                  <span className="text-[#111] font-semibold group-hover:underline flex items-center gap-1">
-                    View Record Details <ChevronRight className="w-3.5 h-3.5" />
-                  </span>
-                </div>
+          {loading ? (
+            <div className="py-20 flex flex-col items-center justify-center gap-3 text-black/50">
+              <RefreshCw className="w-6 h-6 animate-spin text-black/40" />
+              <p className="text-xs font-mono">Querying patient medical record stream...</p>
+            </div>
+          ) : error ? (
+            <div className="p-6 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <AlertCircle className="w-4 h-4" />
+                <span>Error Loading Patient History</span>
               </div>
-            ))}
-          </div>
+              <p className="text-xs">{error}</p>
+              <button
+                onClick={() => fetchPatientHistory(displayPatient?.id || patientId)}
+                className="mt-2 px-3 py-1.5 bg-rose-700 text-white rounded-lg text-xs font-semibold"
+              >
+                Retry
+              </button>
+            </div>
+          ) : filteredEvents.length === 0 ? (
+            <div className="py-20 text-center space-y-3 bg-white/40 rounded-2xl border border-dashed border-black/10 p-8">
+              <FolderOpen className="w-10 h-10 text-black/30 mx-auto" />
+              <h4 className="text-sm font-bold text-[#111]">No Medical History Records</h4>
+              <p className="text-xs text-black/50 max-w-sm mx-auto">
+                No clinical events (consultations, admissions, laboratory tests, or invoices) were found for this patient in the database.
+              </p>
+            </div>
+          ) : (
+            <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-black/10">
+              {filteredEvents.map((evt) => (
+                <div
+                  key={evt.id}
+                  onClick={() => setSelectedEvent(evt)}
+                  className={`relative group cursor-pointer p-4 rounded-2xl border transition-all ${
+                    selectedEvent?.id === evt.id
+                      ? "bg-white border-black/30 shadow-md scale-[1.01]"
+                      : "bg-white/70 border-black/10 hover:bg-white hover:border-black/20"
+                  }`}
+                >
+                  {/* Timeline Dot */}
+                  <div
+                    className={`absolute -left-6 top-5 transform -translate-x-1/2 w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center shadow-sm ${
+                      evt.type === "Emergency"
+                        ? "border-rose-600"
+                        : evt.type === "Admission" || evt.type === "Discharge"
+                        ? "border-indigo-600"
+                        : evt.type === "Lab Report"
+                        ? "border-purple-600"
+                        : evt.type === "Prescription"
+                        ? "border-amber-600"
+                        : evt.type === "Billing"
+                        ? "border-emerald-600"
+                        : "border-[#111]"
+                    }`}
+                  >
+                    <div
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        evt.type === "Emergency"
+                          ? "bg-rose-600 animate-pulse"
+                          : evt.type === "Admission" || evt.type === "Discharge"
+                          ? "bg-indigo-600"
+                          : evt.type === "Lab Report"
+                          ? "bg-purple-600"
+                          : evt.type === "Prescription"
+                          ? "bg-amber-600"
+                          : evt.type === "Billing"
+                          ? "bg-emerald-600"
+                          : "bg-[#111]"
+                      }`}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between mb-1">
+                    <span
+                      className={`font-pixel text-[9px] tracking-widest px-2.5 py-0.5 rounded-md uppercase font-bold ${
+                        evt.type === "Emergency"
+                          ? "bg-rose-100 text-rose-800"
+                          : evt.type === "Admission" || evt.type === "Discharge"
+                          ? "bg-indigo-100 text-indigo-800"
+                          : evt.type === "Lab Report"
+                          ? "bg-purple-100 text-purple-800"
+                          : evt.type === "Prescription"
+                          ? "bg-amber-100 text-amber-800"
+                          : evt.type === "Billing"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-black/10 text-black/80"
+                      }`}
+                    >
+                      {evt.type}
+                    </span>
+                    <span className="text-[11px] font-mono text-black/40 font-medium">
+                      {evt.timestamp}
+                    </span>
+                  </div>
+
+                  <h4 className="text-sm font-bold text-[#111] mt-1">{evt.title}</h4>
+                  <p className="text-xs text-black/60 mt-1 leading-relaxed">{evt.summary}</p>
+
+                  <div className="mt-3 pt-2 border-t border-black/10 flex items-center justify-between text-[11px] text-black/50 font-medium">
+                    <span>Provider: {evt.doctorName}</span>
+                    <span className="text-[#111] font-semibold group-hover:underline flex items-center gap-1">
+                      View Payload <ChevronRight className="w-3.5 h-3.5" />
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </SpotlightCard>
 
         {/* Detailed Event Inspector Drawer (5 cols) */}
@@ -527,7 +804,7 @@ export function EMRPatient360View({
               <span>Event Detail Inspector</span>
             </h3>
             <p className="text-xs text-black/50 mb-6">
-              Select any timeline record on the left to inspect verified clinical payload
+              Select any timeline event on the left to inspect authoritative database record fields
             </p>
 
             {selectedEvent ? (
@@ -547,16 +824,16 @@ export function EMRPatient360View({
 
                 <div className="space-y-1.5">
                   <div className="font-bold text-[#111] font-pixel text-[10px] tracking-wider uppercase text-black/40">
-                    Attending Physician
+                    Attending Physician / Department
                   </div>
                   <div className="p-2.5 bg-white/80 rounded-xl border border-black/10 font-medium text-black/80">
-                    {selectedEvent.doctorName}
+                    {selectedEvent.doctorName} — {selectedEvent.department}
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
                   <div className="font-bold text-[#111] font-pixel text-[10px] tracking-wider uppercase text-black/40">
-                    Clinical Notes
+                    Clinical Notes &amp; Summary
                   </div>
                   <div className="p-3 bg-white/80 rounded-xl border border-black/10 text-black/70 leading-relaxed">
                     {selectedEvent.summary}
@@ -565,9 +842,9 @@ export function EMRPatient360View({
 
                 <div className="space-y-1.5">
                   <div className="font-bold text-[#111] font-pixel text-[10px] tracking-wider uppercase text-black/40">
-                    Structured Payload Data
+                    Database Payload Properties
                   </div>
-                  <pre className="p-3 bg-[#111] text-emerald-400 rounded-xl font-mono text-[11px] overflow-x-auto leading-relaxed">
+                  <pre className="p-3 bg-[#111] text-emerald-400 rounded-xl font-mono text-[11px] overflow-x-auto leading-relaxed max-h-72">
                     {JSON.stringify(selectedEvent.details, null, 2)}
                   </pre>
                 </div>
@@ -577,7 +854,7 @@ export function EMRPatient360View({
                 <Info className="w-8 h-8 text-black/30 mx-auto mb-2" />
                 <p className="text-xs font-semibold text-[#111]">No timeline event selected</p>
                 <p className="text-[11px] text-black/40 mt-1">
-                  Click on any record entry in the timeline to load full clinical data
+                  Click on any verified event in the timeline feed to inspect detailed payload
                 </p>
               </div>
             )}

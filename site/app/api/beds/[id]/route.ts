@@ -4,12 +4,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "NURSE", "DOCTOR");
+    if (auth.error) return auth.error;
+
     const { id } = await params;
     const body = await request.json();
 

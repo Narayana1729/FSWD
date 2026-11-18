@@ -42,6 +42,7 @@ export const EMERGENCY_RATES_CATALOG: Record<string, { code: string; name: strin
 
 export interface Patient {
   id: string;
+  mrn?: string;
   name: string;
   age: number;
   gender: "Male" | "Female" | "Other";
@@ -119,7 +120,7 @@ export interface EmergencyCase {
   traumaBay: string;
   bedNo: string;
   vitals: { bp: string; pulse: number; temp: string; spo2: number };
-  status: "Triaged" | "Under Care" | "ICU Transfer" | "Discharged" | "Referred";
+  status: "Triaged" | "Under Care" | "ICU Transfer" | "Discharged" | "Referred" | "Admitted" | string;
 }
 
 export interface PharmacyItem {
@@ -162,10 +163,11 @@ export interface RadiologyScan {
   urgency?: "Routine" | "Urgent" | "Stat Emergency" | string;
   technician?: string;
   radiologist: string;
-  status: "Scheduled" | "Scanning" | "Report Writing" | "Completed";
+  status: "Scheduled" | "Scanning" | "Report Writing" | "Completed" | string;
   reportText?: string;
   dcmImage: string;
   scanDate: string;
+  patient?: any;
 }
 
 export interface OperationSurgery {
@@ -191,6 +193,7 @@ export interface OperationSurgery {
 }
 
 export interface BloodBankStock {
+  id?: string;
   group: "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-";
   unitsAvailable: number;
   minAlertThreshold: number;
@@ -198,6 +201,7 @@ export interface BloodBankStock {
   compatibleRecipients: string[];
   expiringIn30Days: number;
 }
+
 
 export interface MedicalEquipmentItem {
   id: string;
@@ -215,12 +219,15 @@ export interface MedicalEquipmentItem {
 export interface StaffMember {
   id: string;
   name: string;
-  role: "Doctor" | "Nurse" | "Lab Technician" | "Pharmacist" | "Receptionist" | "Security" | "Cleaning" | "Driver" | "Admin";
-  department: string;
-  shift: "Morning (7AM-3PM)" | "Evening (3PM-11PM)" | "Night (11PM-7AM)";
-  phone: string;
-  attendanceStatus: "Present" | "On Leave" | "Clocked Out" | "In Shift";
-  salaryMonthly: number;
+  role: string;
+  dept?: string;
+  department?: string;
+  shift?: string;
+  status?: string;
+  attendanceStatus?: string;
+  phone?: string;
+  salary?: number;
+  salaryMonthly?: number;
 }
 
 export interface InventoryConsumable {
@@ -234,15 +241,6 @@ export interface InventoryConsumable {
   unitCost: number;
 }
 
-export interface StaffMember {
-  id: string;
-  name: string;
-  role: string;
-  dept: string;
-  shift: string;
-  status: string;
-  salary: number;
-}
 
 export interface AmbulanceItem {
   id: string;
@@ -269,13 +267,20 @@ export interface BillingInvoice {
   tax?: number;
   finalAmount: number;
   paymentStatus: "Paid" | "Pending Insurance" | "Partially Paid" | "Outstanding" | "Pending";
+  payments?: {
+    id: string;
+    amount: number;
+    method: string;
+    reference?: string | null;
+    paidAt: string;
+  }[];
 }
 
 export interface EMRTimelineEvent {
   id: string;
   patientId: string;
   timestamp: string;
-  type: "Visit" | "Diagnosis" | "Prescription" | "Lab Report" | "Imaging" | "Procedure" | "Admission" | "Discharge";
+  type: "Visit" | "Diagnosis" | "Prescription" | "Lab Report" | "Imaging" | "Procedure" | "Admission" | "Discharge" | "Emergency" | string;
   title: string;
   doctorName: string;
   department: string;

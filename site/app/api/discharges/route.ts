@@ -5,9 +5,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { WARD_RATES_CATALOG } from "@/lib/hms-data";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "NURSE");
+    if (auth.error) return auth.error;
+    const user = auth.user;
+
     const body = await request.json();
     const { patientId, bedId, bedNo, dischargeNotes } = body;
 
@@ -136,11 +141,12 @@ export async function POST(request: NextRequest) {
       await tx.auditLog.create({
         data: {
           logId: `LOG-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
-          userName: "Dr. Sushruta",
-          role: "Chief Surgical Officer",
+          userId: user.id,
+          userName: user.name || "Attending Clinician",
+          role: user.role || "Doctor",
           action: "FINAL_INPATIENT_DISCHARGE",
           resource: `Discharged patient ${patient.name} from Bed #${bed.bedNo}. Appended ₹${roomTotalCharge.toLocaleString('en-IN')} room charge (${billableDays} days). Final Invoice #${invoice.invoiceNo}.`,
-          ip: "192.168.1.65",
+          ip: request.headers.get("x-forwarded-for") || "127.0.0.1",
           status: "Success",
         },
       });

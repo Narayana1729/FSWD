@@ -15,6 +15,7 @@ import {
   Plus,
 } from "lucide-react";
 import { LabOrder, LabSampleStatus } from "@/lib/hms-data";
+import { getAuthHeaders } from "@/hooks/use-hms-api";
 
 interface LaboratoryViewProps {
   labOrders: LabOrder[];
@@ -54,7 +55,11 @@ export function LaboratoryView({ labOrders, onUpdateLabOrders }: LaboratoryViewP
     try {
       const res = await fetch("/api/lab-orders", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({ id: target.id, orderId: (target as any).orderId, status: nextStatus, technician: "Tech Alok Verma" }),
       });
 
@@ -204,7 +209,11 @@ export function LaboratoryView({ labOrders, onUpdateLabOrders }: LaboratoryViewP
                 try {
                   fetch("/api/lab-orders", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: {
+                      "Content-Type": "application/json",
+                      ...getAuthHeaders(),
+                    },
+                    credentials: "same-origin",
                     body: JSON.stringify({
                       patientId: "cmsvcbdc80011j1bwjcniweo4",
                       doctorId: "DOC-101",

@@ -5,11 +5,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { EMERGENCY_RATES_CATALOG } from "@/lib/hms-data";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "NURSE");
+    if (auth.error) return auth.error;
+    const user = auth.user;
+
     const body = await request.json();
     const { emergencyCaseId, bedNo, targetWard } = body;
+
 
     if (!emergencyCaseId) {
       return NextResponse.json({ error: "emergencyCaseId is required" }, { status: 400 });
@@ -172,14 +178,16 @@ export async function POST(request: NextRequest) {
       await tx.auditLog.create({
         data: {
           logId: `LOG-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
-          userName: "Dr. Ashwini Kumaras",
-          role: "Emergency Chief",
+          userId: user.id,
+          userName: user.name || "Emergency Staff",
+          role: user.role || "Emergency",
           action: "EMERGENCY_ADMISSION",
           resource: `Admitted Emergency Case #${emgCase.caseId} (${emgCase.severity} Triage) to Bed #${allocatedBed.bedNo}. Billed ₹${triageFee.toLocaleString('en-IN')}. Invoice #${invoice.invoiceNo}.`,
-          ip: "192.168.1.72",
+          ip: request.headers.get("x-forwarded-for") || "127.0.0.1",
           status: "Success",
         },
       });
+
 
       // 8. Auto-Release Dispatched Ambulances — return all "On Dispatch" ambulances back to "Available"
       const dispatchedAmbulances = await tx.ambulance.findMany({ where: { availability: "On Dispatch" } });

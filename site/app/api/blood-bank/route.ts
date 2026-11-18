@@ -5,9 +5,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authenticateRequest } from "@/lib/auth";
+import { authorizeRole } from "@/lib/rbac";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request);
+    if (auth.error) return auth.error;
     const stock = await prisma.bloodUnit.findMany({
       orderBy: { bloodGroup: "asc" },
     });
@@ -20,6 +24,9 @@ export async function GET() {
 
 export async function PATCH(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "NURSE", "LAB_TECH");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { bloodGroup, unitsChange } = body;
 

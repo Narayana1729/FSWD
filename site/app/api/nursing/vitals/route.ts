@@ -4,9 +4,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "NURSE", "DOCTOR");
+    if (auth.error) return auth.error;
+    const user = auth.user;
+
     const body = await request.json();
     const { patientId, visitId, bp, pulse, temperature, spo2, weight, height, recordedBy } = body;
 
@@ -47,7 +52,7 @@ export async function POST(request: NextRequest) {
         spo2: spo2 ? parseInt(String(spo2)) : 99,
         weight: weight ? parseFloat(String(weight)) : 70,
         height: height ? parseFloat(String(height)) : 172,
-        recordedBy: recordedBy || "Nurse Sister Anitha",
+        recordedBy: recordedBy || user.name || "Attending Nurse",
       },
       include: {
         visit: {
@@ -59,11 +64,12 @@ export async function POST(request: NextRequest) {
     await prisma.auditLog.create({
       data: {
         logId: `LOG-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
-        userName: recordedBy || "Nurse Sister Anitha",
-        role: "Nurse",
+        userId: user.id,
+        userName: user.name || recordedBy || "Attending Nurse",
+        role: user.role || "Nurse",
         action: "RECORD_NURSING_VITALS",
         resource: `Recorded vitals (BP: ${vitals.bp}, Pulse: ${vitals.pulse}, SpO2: ${vitals.spo2}%) for patient #${patientId}`,
-        ip: "192.168.1.58",
+        ip: request.headers.get("x-forwarded-for") || "127.0.0.1",
         status: "Success",
       },
     });

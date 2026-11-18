@@ -5,12 +5,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authenticateRequest } from "@/lib/auth";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await authenticateRequest(request);
+    if (auth.error) return auth.error;
+
     const { id } = await params;
     const labOrder = await prisma.labOrder.findFirst({
       where: { OR: [{ id }, { orderId: id }] },
@@ -34,6 +39,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "LAB_TECH");
+    if (auth.error) return auth.error;
+
     const { id } = await params;
     const body = await request.json();
 

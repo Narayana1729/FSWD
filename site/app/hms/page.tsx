@@ -52,7 +52,10 @@ import {
   EmergencyCase,
   PharmacyItem,
   LabOrder,
+  BloodBankStock,
+  AuditLogEntry,
 } from "@/lib/hms-data";
+
 
 import { useSearchParams } from "next/navigation";
 
@@ -60,12 +63,11 @@ function HMSAppContent() {
   const searchParams = useSearchParams();
   const initialRoleParam = searchParams.get("role");
 
-  // Auth & Session State: Prompt Login / Signup first if not authenticated
-  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(initialRoleParam));
+  // Auth & Session State: Strictly require verified session
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [activeRole, setActiveRole] = useState(initialRoleParam || "Doctor");
-  const [loggedInUserName, setLoggedInUserName] = useState(
-    initialRoleParam === "Doctor" ? "Dr. Dhanvantari" : ""
-  );
+  const [loggedInUserName, setLoggedInUserName] = useState("");
   const [activeModule, setActiveModule] = useState<HMSModuleId>(() => {
     if (initialRoleParam === "Doctor") return "opd";
     if (initialRoleParam === "Nurse") return "ipd-beds";
@@ -76,30 +78,60 @@ function HMSAppContent() {
   const [selectedPatientId, setSelectedPatientId] = useState("P-1001");
 
   useEffect(() => {
-    const roleParam = searchParams.get("role");
-    if (roleParam) {
-      handleRoleChange(roleParam);
-      setIsAuthenticated(true);
+    async function checkAuthSession() {
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("hms_auth_token") : null;
+        const res = await fetch("/api/auth/me", {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: "same-origin",
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          if (json.user) {
+            setIsAuthenticated(true);
+            setActiveRole(json.user.role);
+            setLoggedInUserName(json.user.name);
+          }
+        }
+      } catch (e) {
+        console.warn("Session check failed:", e);
+      } finally {
+        setIsAuthChecking(false);
+      }
     }
-  }, [searchParams]);
+    checkAuthSession();
+  }, []);
 
   // Datastore State connected to Prisma REST API (/api/*) & SQLite DB
   const { data: patients, setData: setPatients, createItem: createPatient } = useHmsApi<Patient>("patients", "patients", INITIAL_PATIENTS);
   const { data: doctors, setData: setDoctors } = useHmsApi("doctors", "doctors", INITIAL_DOCTORS);
   const { data: opdTokens, setData: setOpdTokens, createItem: createOpdToken, updateItem: updateOpdToken } = useHmsApi<OPDToken>("appointments", "appointments", INITIAL_OPD_TOKENS);
   const { data: beds, setData: setBeds, updateItem: updateBed } = useHmsApi<BedItem>("beds", "beds", INITIAL_BEDS);
-  const { data: emergencyCases, setData: setEmergencyCases } = useHmsApi<EmergencyCase>("emergency", "cases", INITIAL_EMERGENCY_CASES);
+  const { data: emergencyCases, setData: setEmergencyCases, createItem: createEmergencyCase } = useHmsApi<EmergencyCase>("emergency", "cases", INITIAL_EMERGENCY_CASES);
   const { data: pharmacyItems, setData: setPharmacyItems } = useHmsApi<PharmacyItem>("pharmacy", "inventory", INITIAL_PHARMACY_ITEMS);
   const { data: labOrders, setData: setLabOrders } = useHmsApi<LabOrder>("lab-orders", "labOrders", INITIAL_LAB_ORDERS);
   const { data: radiologyScans, setData: setRadiologyScans } = useHmsApi("radiology", "scans", INITIAL_RADIOLOGY_SCANS);
   const { data: operations, setData: setOperations } = useHmsApi("surgeries", "surgeries", INITIAL_OPERATIONS);
-  const { data: bloodBankStock, setData: setBloodBankStock } = useHmsApi("blood-bank", "stock", INITIAL_BLOOD_BANK);
+  const { data: bloodBankStock, setData: setBloodBankStock } = useHmsApi<BloodBankStock>("blood-bank", "stock", INITIAL_BLOOD_BANK);
   const { data: equipment, setData: setEquipment } = useHmsApi("equipment", "equipment", INITIAL_EQUIPMENT);
   const { data: ambulanceFleet, setData: setAmbulanceFleet } = useHmsApi("ambulances", "ambulances", INITIAL_AMBULANCE_FLEET);
   const { data: invoices, setData: setInvoices } = useHmsApi("billing", "invoices", INITIAL_BILLING_INVOICES);
-  const { data: inventory, setData: setInventory } = usePersistentState("dronagiri_inventory", INITIAL_INVENTORY);
+  const [inventory, setInventory] = usePersistentState("dronagiri_inventory", INITIAL_INVENTORY);
   const { data: staff, setData: setStaff } = useHmsApi("staff", "staff", INITIAL_STAFF);
-  const [auditLogs] = usePersistentState("dronagiri_audit_logs", INITIAL_AUDIT_LOGS);
+  const { data: auditLogs } = useHmsApi<AuditLogEntry>("audit-logs", "logs", INITIAL_AUDIT_LOGS);
+
+  // If verifying session, show loader
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-[#F5F4F0] flex items-center justify-center p-6 text-slate-800 font-mono text-xs">
+        <div className="flex items-center gap-3">
+          <div className="w-4 h-4 rounded-full border-2 border-slate-900 border-t-transparent animate-spin" />
+          <span>VERIFYING CLINICAL CREDENTIALS...</span>
+        </div>
+      </div>
+    );
+  }
 
   // If user is not authenticated, render AuthSwitch
   if (!isAuthenticated) {
@@ -114,6 +146,7 @@ function HMSAppContent() {
     );
   }
 
+
   // Handlers for state updates
   const handleRoleChange = (role: string) => {
     setActiveRole(role);
@@ -126,14 +159,23 @@ function HMSAppContent() {
   };
 
   const handleAddPatient = (newP: Patient) => {
+    setPatients((prev) => [newP, ...prev.filter((p) => p.id !== newP.id)]);
     createPatient(newP, {
       name: newP.name,
       age: newP.age,
       gender: newP.gender,
-      phone: newP.phone,
-      bloodGroup: newP.bloodGroup,
-      status: newP.status,
-    });
+      phone: newP.phone || "9876543210",
+      email: newP.email || undefined,
+      address: newP.address || undefined,
+      bloodGroup: newP.bloodGroup || "O+",
+      status: newP.status || "OPD Queue",
+      department: newP.department || "Cardiology",
+      emergencyContact: newP.emergencyContact,
+      medicalHistory: newP.medicalHistory,
+      allergies: newP.allergies,
+      currentConditions: newP.currentConditions,
+      insurance: newP.insurance,
+    }).catch((err) => console.warn("Failed to persist patient to server:", err));
   };
 
   const handleAddOPDToken = (t: OPDToken) => {
@@ -149,6 +191,17 @@ function HMSAppContent() {
 
   const handleAddEmergencyCase = (c: EmergencyCase) => {
     setEmergencyCases((prev) => [c, ...prev]);
+    createEmergencyCase(c, {
+      patientName: c.patientName,
+      age: c.age,
+      gender: c.gender,
+      severity: c.severity,
+      chiefComplaint: c.chiefComplaint,
+      assignedDoctor: c.assignedDoctor,
+      traumaBay: c.traumaBay,
+      bedNo: c.bedNo,
+      vitals: c.vitals,
+    }).catch((err) => console.warn("Failed to persist emergency case to server:", err));
   };
 
   return (
@@ -300,6 +353,7 @@ function HMSAppContent() {
         <BillingInsuranceView
           invoices={invoices}
           onUpdateInvoices={(invList) => setInvoices(invList)}
+          patients={patients}
         />
       )}
 

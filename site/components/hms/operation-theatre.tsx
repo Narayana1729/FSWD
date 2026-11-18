@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { OperationSurgery } from "@/lib/hms-data";
+import { getAuthHeaders } from "@/hooks/use-hms-api";
 
 interface OperationTheatreViewProps {
   operations: OperationSurgery[];
@@ -136,7 +137,11 @@ export function OperationTheatreView({ operations = [], onUpdateOperations }: Op
     try {
       await fetch("/api/surgeries", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({
           patientId: "cmsvcbdc80011j1bwjcniweo4",
           procedure: newOp.procedure,

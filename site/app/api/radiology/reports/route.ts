@@ -5,9 +5,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { RADIOLOGY_TEST_CATALOG } from "@/lib/hms-data";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "RAD_TECH");
+    if (auth.error) return auth.error;
+    const user = auth.user;
+
     const body = await request.json();
     const { radiologyOrderId, reportText, findings, impression, reportedBy } = body;
 
@@ -52,7 +57,7 @@ export async function POST(request: NextRequest) {
           reportText,
           findings: findings || "No acute bony abnormality or focal alveolar consolidation observed.",
           impression: impression || "Unremarkable imaging scan findings.",
-          reportedBy: reportedBy || "Dr. Jivaka",
+          reportedBy: user.name || reportedBy || "Dr. Jivaka",
           reportedAt: new Date(),
         },
       });
@@ -126,11 +131,12 @@ export async function POST(request: NextRequest) {
       await tx.auditLog.create({
         data: {
           logId: `LOG-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
-          userName: reportedBy || "Dr. Jivaka",
-          role: "Radiologist",
+          userId: user.id,
+          userName: user.name || reportedBy || "Dr. Jivaka",
+          role: user.role || "Radiologist",
           action: "AUTHORIZE_RADIOLOGY_REPORT",
           resource: `Authorized Radiology Scan #${radOrder.orderId} (${radOrder.scanType}) for ${radOrder.patient.name}. ₹${scanPrice} billed to Invoice #${invoice.invoiceNo}.`,
-          ip: "192.168.1.53",
+          ip: request.headers.get("x-forwarded-for") || "127.0.0.1",
           status: "Success",
         },
       });

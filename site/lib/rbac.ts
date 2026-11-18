@@ -4,7 +4,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest } from "next/server";
-import { requireAuth, type AuthUser } from "@/lib/auth";
+import { requireAuth, getCurrentUser, type AuthUser } from "@/lib/auth";
+export type { AuthUser };
+
 
 // ── Role Definitions ─────────────────────────────────────────────────────────
 
@@ -118,7 +120,8 @@ export function hasPermission(
   resource: string,
   action: string
 ): boolean {
-  const perms = PERMISSIONS[role as Role];
+  const normalizedRole = (role || "").toUpperCase() as Role;
+  const perms = PERMISSIONS[normalizedRole];
   if (!perms) return false;
 
   // Admin wildcard
@@ -133,57 +136,173 @@ export function hasPermission(
   return false;
 }
 
-// ── Middleware: Require Role ─────────────────────────────────────────────────
-// Use this in API routes: const user = await requireRole(request, "ADMIN", "DOCTOR");
-// Throws 401 if not authenticated, 403 if role not allowed.
+// ── Non-throwing Role Authorization ──────────────────────────────────────────
+
+export async function authorizeRole(
+  request: NextRequest,
+  ...allowedRoles: string[]
+): Promise<{ user: AuthUser; error?: never } | { user?: never; error: Response }> {
+  const user = await getCurrentUser(request);
+  if (!user) {
+    return {
+      error: new Response(
+        JSON.stringify({ error: "Unauthorized", message: "Authentication required to access this resource" }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      ),
+    };
+  }
+
+  const userRole = (user.role || "").toUpperCase();
+  const normalizedAllowed = allowedRoles.map((r) => r.toUpperCase());
+
+  // Admin always passes
+  if (userRole === "ADMIN") {
+    return { user };
+  }
+
+  if (!normalizedAllowed.includes(userRole)) {
+    return {
+      error: new Response(
+        JSON.stringify({
+          error: "Forbidden",
+          message: `Role '${user.role}' is not authorized for this action. Required: ${allowedRoles.join(", ")}`,
+        }),
+        {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }
+      ),
+    };
+  }
+
+  return { user };
+}
+
+// ── Non-throwing Permission Authorization ────────────────────────────────────
+
+export async function authorizePermission(
+  request: NextRequest,
+  resource: string,
+  action: string
+): Promise<{ user: AuthUser; error?: never } | { user?: never; error: Response }> {
+  const user = await getCurrentUser(request);
+  if (!user) {
+    return {
+      error: new Response(
+        JSON.stringify({ error: "Unauthorized", message: "Authentication required to access this resource" }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      ),
+    };
+  }
+
+  if (!hasPermission(user.role, resource, action)) {
+    return {
+      error: new Response(
+        JSON.stringify({
+          error: "Forbidden",
+          message: `Role '${user.role}' lacks permission '${resource}.${action}'`,
+        }),
+        {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }
+      ),
+    };
+  }
+
+  return { user };
+}
+
+// ── Middleware: Require Role (Throws 401/403 Response) ────────────────────────
 
 export async function requireRole(
   request: NextRequest,
-  ...allowedRoles: Role[]
+  ...allowedRoles: (Role | string)[]
 ): Promise<AuthUser> {
-  const user = await requireAuth(request);
-
-  // Admin always passes
-  if (user.role === "ADMIN") return user;
-
-  if (!allowedRoles.includes(user.role as Role)) {
-    throw new Response(
-      JSON.stringify({
-        error: "Forbidden",
-        message: `Role '${user.role}' is not authorized for this action. Required: ${allowedRoles.join(", ")}`,
-      }),
-      {
-        status: 403,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+  const auth = await authorizeRole(request, ...allowedRoles);
+  if (auth.error) {
+    throw auth.error;
   }
-
-  return user;
+  return auth.user;
 }
 
-// ── Middleware: Require Permission ───────────────────────────────────────────
-// Fine-grained: const user = await requirePermission(request, "patients", "create");
+// ── Middleware: Require Permission (Throws 401/403 Response) ──────────────────
 
 export async function requirePermission(
   request: NextRequest,
   resource: string,
   action: string
 ): Promise<AuthUser> {
-  const user = await requireAuth(request);
+  const auth = await authorizePermission(request, resource, action);
+  if (auth.error) {
+    throw auth.error;
+  }
+  return auth.user;
+}
 
-  if (!hasPermission(user.role, resource, action)) {
-    throw new Response(
-      JSON.stringify({
-        error: "Forbidden",
-        message: `Role '${user.role}' lacks permission '${resource}.${action}'`,
-      }),
-      {
-        status: 403,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+// ── Resource-Level Authorization: Patient Ownership ──────────────────────────
+
+/**
+ * Look up the Patient record associated with the authenticated user.
+ * Matches by userId, or falls back to case-insensitive email match.
+ * Resolves the persistent link if userId was previously unassigned.
+ */
+export async function getPatientForUser(
+  user: AuthUser,
+  dbClient?: any
+): Promise<{ id: string; mrn: string; userId: string | null; email: string | null } | null> {
+  const client = dbClient || (await import("@/lib/db")).prisma;
+  const patient = await client.patient.findFirst({
+    where: {
+      OR: [
+        { userId: user.id },
+        ...(user.email ? [{ email: user.email }] : []),
+      ],
+    },
+    select: { id: true, mrn: true, userId: true, email: true },
+  });
+
+  if (patient && !patient.userId && user.id) {
+    // Automatically bind the userId to establish permanent relational foreign key
+    try {
+      await client.patient.update({
+        where: { id: patient.id },
+        data: { userId: user.id },
+      });
+      patient.userId = user.id;
+    } catch {
+      // Ignored if concurrent update occurs
+    }
   }
 
-  return user;
+  return patient;
 }
+
+/**
+ * Validates whether an authenticated user is authorized to access a given patient record.
+ * - Non-PATIENT roles (ADMIN, DOCTOR, NURSE, etc.) have role-based authorization.
+ * - PATIENT role can ONLY access their own patient record (matched by userId or email).
+ */
+export function isPatientOwner(
+  user: AuthUser,
+  patient: { id: string; mrn?: string | null; userId?: string | null; email?: string | null }
+): boolean {
+  if (user.role.toUpperCase() !== "PATIENT") {
+    return true; // Staff access is handled by role permissions
+  }
+  const idMatches = Boolean(patient.userId) && patient.userId === user.id;
+  const emailMatches =
+    Boolean(patient.email) &&
+    Boolean(user.email) &&
+    patient.email!.trim().toLowerCase() === user.email.trim().toLowerCase();
+
+  return idMatches || emailMatches;
+}
+
+

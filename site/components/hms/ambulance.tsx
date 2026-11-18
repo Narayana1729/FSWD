@@ -22,6 +22,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { AmbulanceItem } from "@/lib/hms-data";
+import { getAuthHeaders } from "@/hooks/use-hms-api";
 
 interface AmbulanceViewProps {
   fleet: AmbulanceItem[];
@@ -93,7 +94,11 @@ export function AmbulanceView({ fleet, onEmergencyDispatch, onUpdateFleet }: Amb
     try {
       const res = await fetch("/api/ambulances", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({
           ambulanceId: selectedAmbulance.id,
           availability,

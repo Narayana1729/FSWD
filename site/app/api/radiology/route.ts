@@ -5,9 +5,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authenticateRequest } from "@/lib/auth";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request);
+    if (auth.error) return auth.error;
+
     const { searchParams } = new URL(request.url);
     const scanType = searchParams.get("scanType");
     const status = searchParams.get("status");
@@ -34,6 +39,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const {
       patientId,
@@ -90,6 +98,9 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "RAD_TECH");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { id, orderId, status, technician, radiologist, dcmImage } = body;
 

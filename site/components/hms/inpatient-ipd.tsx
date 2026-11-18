@@ -22,6 +22,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { BedItem, Patient, BedWard, BedStatus } from "@/lib/hms-data";
+import { getAuthHeaders } from "@/hooks/use-hms-api";
 
 interface InpatientIPDViewProps {
   beds: BedItem[];
@@ -171,7 +172,11 @@ export function InpatientIPDView({ beds, patients, onUpdateBeds }: InpatientIPDV
     try {
       const res = await fetch("/api/discharges", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({
           patientId: selectedBedForDischarge.patientId,
           bedNo: selectedBedForDischarge.bedNo,

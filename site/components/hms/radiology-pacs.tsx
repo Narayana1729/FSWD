@@ -16,6 +16,7 @@ import {
   Plus,
 } from "lucide-react";
 import { RadiologyScan } from "@/lib/hms-data";
+import { getAuthHeaders } from "@/hooks/use-hms-api";
 
 interface RadiologyPACSViewProps {
   scans: RadiologyScan[];
@@ -52,7 +53,11 @@ export function RadiologyPACSView({ scans, onUpdateScans }: RadiologyPACSViewPro
     try {
       const res = await fetch("/api/radiology/reports", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({
           radiologyOrderId: selectedScan.id,
           reportText: reportText || "Diagnostic Impression: Unremarkable imaging scan.",
@@ -184,7 +189,7 @@ export function RadiologyPACSView({ scans, onUpdateScans }: RadiologyPACSViewPro
           <div className="relative h-96 bg-black rounded-2xl border border-slate-800 overflow-hidden flex items-center justify-center">
             {/* DICOM HUD Metadata Overlays (Top Left & Top Right) */}
             <div className="absolute top-3 left-3 text-[10px] font-mono text-emerald-400 space-y-0.5 pointer-events-none z-10 bg-black/60 p-2 rounded-lg backdrop-blur-xs">
-              <div>PATIENT: {(selectedScan.patientName || (selectedScan.patient as any)?.name || "UNKNOWN PATIENT").toUpperCase()}</div>
+              <div>PATIENT: {(selectedScan.patientName || (selectedScan as any).patient?.name || "UNKNOWN PATIENT").toUpperCase()}</div>
               <div>ID: {selectedScan.patientId}</div>
               <div>SERIES: #1 (128 SLICES)</div>
             </div>
@@ -267,7 +272,11 @@ export function RadiologyPACSView({ scans, onUpdateScans }: RadiologyPACSViewPro
                 try {
                   fetch("/api/radiology", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: {
+                      "Content-Type": "application/json",
+                      ...getAuthHeaders(),
+                    },
+                    credentials: "same-origin",
                     body: JSON.stringify({
                       patientId: "cmsvcbdc80011j1bwjcniweo4",
                       doctorId: "DOC-101",

@@ -7,11 +7,27 @@ import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { NextRequest } from "next/server";
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "hms-fallback-secret-DO-NOT-USE-IN-PROD"
-);
-const JWT_ISSUER = "hms-enterprise";
-const JWT_EXPIRY = "24h";
+export const JWT_ISSUER = "hms-enterprise";
+export const JWT_EXPIRY = "24h";
+
+/**
+ * Retrieves the cryptographic secret key for JWT signing and verification.
+ * In production, fails safely with an explicit Error if JWT_SECRET is unset.
+ * In development or test, uses an explicit, safe fallback secret.
+ */
+export function getJwtSecret(): Uint8Array {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.trim() === "") {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "FATAL: JWT_SECRET environment variable is missing or empty in production. Authentication cannot initialize safely."
+      );
+    }
+    // Explicit, deterministic development secret (never permitted in production)
+    return new TextEncoder().encode("dronagiri-dev-jwt-secret-do-not-use-in-production-min32bytes!");
+  }
+  return new TextEncoder().encode(secret.trim());
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +66,7 @@ export async function createToken(user: {
   role: string;
   name: string;
 }): Promise<string> {
+  const secret = getJwtSecret();
   return new SignJWT({
     sub: user.id,
     email: user.email,
@@ -60,15 +77,17 @@ export async function createToken(user: {
     .setIssuedAt()
     .setIssuer(JWT_ISSUER)
     .setExpirationTime(JWT_EXPIRY)
-    .sign(JWT_SECRET);
+    .sign(secret);
 }
 
 // ── JWT Verification ─────────────────────────────────────────────────────────
 
 export async function verifyToken(token: string): Promise<JWTPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET, {
+    const secret = getJwtSecret();
+    const { payload } = await jwtVerify(token, secret, {
       issuer: JWT_ISSUER,
+      algorithms: ["HS256"],
     });
     return {
       sub: payload.sub as string,
@@ -86,10 +105,19 @@ export async function verifyToken(token: string): Promise<JWTPayload | null> {
 export async function getCurrentUser(
   request: NextRequest
 ): Promise<AuthUser | null> {
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
+  let token: string | undefined;
 
-  const token = authHeader.slice(7);
+  const authHeader = request.headers.get("Authorization") || request.headers.get("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    token = authHeader.slice(7).trim();
+  } else if (authHeader) {
+    token = authHeader.trim();
+  } else {
+    token = request.cookies.get("hms_token")?.value;
+  }
+
+  if (!token) return null;
+
   const payload = await verifyToken(token);
   if (!payload) return null;
 
@@ -101,15 +129,33 @@ export async function getCurrentUser(
   };
 }
 
+// ── Authenticate Request (returns { user } or { error: NextResponse }) ────────
+
+export async function authenticateRequest(
+  request: NextRequest
+): Promise<{ user: AuthUser; error?: never } | { user?: never; error: Response }> {
+  const user = await getCurrentUser(request);
+  if (!user) {
+    return {
+      error: new Response(
+        JSON.stringify({ error: "Unauthorized", message: "Authentication required to access this resource" }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      ),
+    };
+  }
+  return { user };
+}
+
 // ── Require Auth (throws 401 Response if not authenticated) ──────────────────
 
 export async function requireAuth(request: NextRequest): Promise<AuthUser> {
-  const user = await getCurrentUser(request);
-  if (!user) {
-    throw new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
+  const auth = await authenticateRequest(request);
+  if (auth.error) {
+    throw auth.error;
   }
-  return user;
+  return auth.user;
 }
+

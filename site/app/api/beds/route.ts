@@ -4,9 +4,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authenticateRequest } from "@/lib/auth";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request);
+    if (auth.error) return auth.error;
+
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
     const ward = searchParams.get("ward");
@@ -48,6 +53,10 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST");
+    if (auth.error) return auth.error;
+    const user = auth.user;
+
     const body = await request.json();
     const { bedId, bedNo, patientId } = body;
 
@@ -102,11 +111,12 @@ export async function POST(request: NextRequest) {
     await prisma.auditLog.create({
       data: {
         logId: `LOG-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
-        userName: "Admissions Officer",
-        role: "Admissions",
+        userId: user.id,
+        userName: user.name || "Admissions Officer",
+        role: user.role || "Admissions",
         action: "ALLOCATE_BED_ADMIT_PATIENT",
         resource: `Allocated ${updatedBed.room.ward.name} Bed #${updatedBed.bedNo} for patient ${patient.name}.`,
-        ip: "192.168.1.60",
+        ip: request.headers.get("x-forwarded-for") || "127.0.0.1",
         status: "Success",
       },
     });
@@ -120,6 +130,9 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "NURSE", "DOCTOR");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { id, bedNo, status, patientName, patientId } = body;
 

@@ -18,7 +18,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Check direct email or doctor prefix alias (dr.dhanvantari <-> dhanvantari)
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: cleanEmail },
+          { email: cleanEmail.startsWith("dr.") ? cleanEmail.replace(/^dr\./, "") : `dr.${cleanEmail}` },
+        ],
+      },
+    });
+
     if (!user) {
       return NextResponse.json(
         { error: "Invalid email or password" },
@@ -62,10 +73,21 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       user: { id: user.id, email: user.email, name: user.name, role: user.role },
       token,
     });
+
+    response.cookies.set("hms_token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24,
+    });
+
+    return response;
+
   } catch (error) {
     console.error("Login error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

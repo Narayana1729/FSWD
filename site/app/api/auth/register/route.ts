@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { hashPassword, createToken } from "@/lib/auth";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,6 +17,23 @@ export async function POST(request: NextRequest) {
         { error: "email, password, name, and role are required" },
         { status: 400 }
       );
+    }
+
+    const requestedRole = (role || "").toUpperCase();
+
+    // Privilege escalation protection: Only ADMIN can register staff accounts.
+    // Unauthenticated clients may only register as PATIENT.
+    if (requestedRole !== "PATIENT") {
+      const auth = await authorizeRole(request, "ADMIN");
+      if (auth.error) {
+        return NextResponse.json(
+          {
+            error: "Forbidden",
+            message: `Registering staff accounts with role '${requestedRole}' requires Administrator authorization.`,
+          },
+          { status: 403 }
+        );
+      }
     }
 
     // Check if user already exists

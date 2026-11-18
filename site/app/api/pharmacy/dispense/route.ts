@@ -4,11 +4,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "PHARMACIST");
+    if (auth.error) return auth.error;
+    const user = auth.user;
+
     const body = await request.json();
     const { prescriptionId, medicineId, quantity: requestedQty } = body;
+
 
     if (!prescriptionId) {
       return NextResponse.json({ error: "prescriptionId is required" }, { status: 400 });
@@ -153,18 +159,20 @@ export async function POST(request: NextRequest) {
     try {
       await prisma.auditLog.create({
         data: {
-          timestamp: new Date().toISOString(),
-          userName: "Pharmacist Ananya",
+          logId: `LOG-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+          userId: user.id,
+          userName: user.name || "Pharmacist",
+          role: user.role,
           action: "DISPENSE_PRESCRIPTION",
-          module: "Pharmacy",
-          ipAddress: "192.168.1.45",
-          details: `Dispensed Rx #${prescriptionId} for ${patient.name}. Stock reduced and ₹${totalPharmacyCharge} billed to Invoice #${invoice.invoiceNo}.`,
-          status: "SUCCESS",
+          resource: `Dispensed Rx #${prescriptionId} for ${patient.name}. Stock reduced and ₹${totalPharmacyCharge} billed to Invoice #${invoice.invoiceNo}.`,
+          ip: request.headers.get("x-forwarded-for") || "127.0.0.1",
+          status: "Success",
         },
       });
     } catch (e) {
       console.warn("Audit log creation error:", e);
     }
+
 
     return NextResponse.json({
       success: true,

@@ -1,13 +1,13 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// GET  /api/appointments — List appointments (filter by doctor, patient, status, date)
-// POST /api/appointments — Create a new appointment / OPD token
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authenticateRequest } from "@/lib/auth";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request);
+    if (auth.error) return auth.error;
+
     const { searchParams } = new URL(request.url);
     const doctorId = searchParams.get("doctorId");
     const patientId = searchParams.get("patientId");
@@ -43,6 +43,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "RECEPTIONIST", "NURSE");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { patientId, doctorId, appointmentDate, appointmentTime, type, notes } = body;
 
@@ -88,6 +91,9 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "RECEPTIONIST", "NURSE");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { id, tokenNo, status } = body;
 
@@ -95,9 +101,21 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "id or tokenNo is required" }, { status: 400 });
     }
 
-    const where = id ? { id } : { tokenNo: parseInt(tokenNo) };
+    let appointmentId = id;
+    if (!appointmentId && tokenNo !== undefined) {
+      const found = await prisma.appointment.findFirst({
+        where: { tokenNo: parseInt(tokenNo) },
+        orderBy: { appointmentDate: "desc" },
+      });
+      if (found) appointmentId = found.id;
+    }
+
+    if (!appointmentId) {
+      return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
+    }
+
     const updated = await prisma.appointment.update({
-      where,
+      where: { id: appointmentId },
       data: { ...(status && { status }) },
     });
 
@@ -107,3 +125,4 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+

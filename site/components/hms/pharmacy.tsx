@@ -16,6 +16,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { PharmacyItem } from "@/lib/hms-data";
+import { getAuthHeaders } from "@/hooks/use-hms-api";
 
 interface PharmacyViewProps {
   pharmacyItems: PharmacyItem[];
@@ -36,7 +37,10 @@ export function PharmacyView({ pharmacyItems, onAddPharmacyItem, onUpdatePharmac
 
   const fetchPrescriptions = React.useCallback(async () => {
     try {
-      const res = await fetch("/api/prescriptions?status=Active");
+      const res = await fetch("/api/prescriptions?status=Active", {
+        headers: getAuthHeaders(),
+        credentials: "same-origin",
+      });
       if (res.ok) {
         const json = await res.json();
         if (json.prescriptions) setPendingPrescriptions(json.prescriptions);
@@ -67,7 +71,11 @@ export function PharmacyView({ pharmacyItems, onAddPharmacyItem, onUpdatePharmac
     try {
       const res = await fetch("/api/pharmacy/dispense", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({ prescriptionId, medicineId, quantity: qty }),
       });
 
@@ -93,6 +101,22 @@ export function PharmacyView({ pharmacyItems, onAddPharmacyItem, onUpdatePharmac
       setDispenseError(err.message || "Network error while dispensing prescription");
     }
   };
+
+  const handleDispense = async () => {
+    if (!selectedItemForDispense) return;
+    const matchingRx = pendingPrescriptions.find((p) =>
+      p.items?.some((it: any) => it.medicineId === selectedItemForDispense.id || it.medicineName?.toLowerCase().includes(selectedItemForDispense.name.toLowerCase()))
+    );
+    if (matchingRx) {
+      await handleDispensePrescription(matchingRx.id, selectedItemForDispense.id, dispenseQty);
+    } else if (pendingPrescriptions.length > 0) {
+      await handleDispensePrescription(pendingPrescriptions[0].id, selectedItemForDispense.id, dispenseQty);
+    } else {
+      setDispenseError("No active prescription found in queue to fulfill with this medicine.");
+    }
+    setShowDispenseModal(false);
+  };
+
 
   return (
     <div className="space-y-6 font-sans">

@@ -220,6 +220,37 @@ async function main() {
     },
   });
 
+  // Driver User & Patient User
+  await prisma.user.create({
+    data: {
+      email: "driver.maruti@dronagiri.health",
+      passwordHash: defaultPasswordHash,
+      name: "Driver Maruti Rescue",
+      role: "STAFF",
+      phone: "+91 98480 00902",
+    },
+  });
+
+  await prisma.user.create({
+    data: {
+      email: "dr.dhanvantari@dronagiri.health",
+      passwordHash: defaultPasswordHash,
+      name: "Dr. Dhanvantari",
+      role: "DOCTOR",
+      phone: "+91 98480 00101",
+    },
+  });
+
+  await prisma.user.create({
+    data: {
+      email: "srimannarayana@dronagiri.health",
+      passwordHash: defaultPasswordHash,
+      name: "Srimannarayana",
+      role: "PATIENT",
+      phone: "+91 98480 34872",
+    },
+  });
+
   // 5. Patients — All Indian Patient Roster (Bhuvan, Upagna, Koushik, Nikhitha, Sundar, Srimannarayana, Tejas, Subramhanyam, Vishal, Shashank, Ganesh)
   const patientsData = [
     {

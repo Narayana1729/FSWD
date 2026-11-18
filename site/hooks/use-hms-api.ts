@@ -1,14 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
-interface UseHmsApiOptions<T> {
-  endpoint: string;
-  dataKey: string;
-  initialData: T[];
+export function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("hms_auth_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
 }
 
-export function useHmsApi<T extends { id?: string | number }>(
+export interface MutationResult<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+export function useHmsApi<T extends Record<string, any>>(
   endpoint: string,
   dataKey: string,
   initialData: T[]
@@ -31,19 +40,40 @@ export function useHmsApi<T extends { id?: string | number }>(
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Keep a reference to latest data for stable reading without breaking functional updaters
+  const dataRef = useRef<T[]>(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
   // Fetch live records from Prisma REST API
   const fetchApiData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`/api/${endpoint}`);
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const res = await fetch(`/api/${endpoint}`, {
+        headers: getAuthHeaders(),
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        let msg = `HTTP error! status: ${res.status}`;
+        try {
+          const errData = await res.json();
+          if (errData.message) msg = errData.message;
+          else if (errData.error) msg = errData.error;
+        } catch {}
+        throw new Error(msg);
+      }
       const json = await res.json();
       const records = json[dataKey];
 
-      if (Array.isArray(records) && records.length > 0) {
+      if (Array.isArray(records)) {
         setData(records);
         if (typeof window !== "undefined") {
-          localStorage.setItem(`dronagiri_api_cache_${dataKey}`, JSON.stringify(records));
+          try {
+            localStorage.setItem(`dronagiri_api_cache_${dataKey}`, JSON.stringify(records));
+          } catch (e) {
+            console.warn(`LocalStorage write error for ${dataKey}:`, e);
+          }
         }
       }
       setError(null);
@@ -59,64 +89,208 @@ export function useHmsApi<T extends { id?: string | number }>(
     fetchApiData();
   }, [fetchApiData]);
 
-  // Sync to localStorage on data changes
-  useEffect(() => {
-    if (typeof window !== "undefined" && data && data.length > 0) {
-      try {
-        localStorage.setItem(`dronagiri_api_cache_${dataKey}`, JSON.stringify(data));
-      } catch (e) {
-        console.warn(`LocalStorage write error for ${dataKey}:`, e);
-      }
-    }
-  }, [dataKey, data]);
-
-  // Create new record via POST /api/{endpoint}
+  // Create new record via POST /api/{endpoint} with robust optimistic rollback
   const createItem = useCallback(
-    async (newItem: T, postBody?: Record<string, any>) => {
-      // Optimistic update
-      const updated = [newItem, ...data];
-      setData(updated);
+    async (newItem: T, postBody?: Record<string, any>): Promise<MutationResult<T>> => {
+      // 1 & 2: Apply optimistic update using functional updater to avoid race conditions
+      setData((prev) => [newItem, ...prev]);
 
       try {
+        // 3: Send API request
         const res = await fetch(`/api/${endpoint}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders(),
+          },
+          credentials: "same-origin",
           body: JSON.stringify(postBody || newItem),
         });
 
-        if (res.ok) {
-          const json = await res.json();
-          // If server returns created record with generated DB ID, sync it
-          const createdRecord = json.patient || json.appointment || json.bed || json.item || json[dataKey.slice(0, -1)];
-          if (createdRecord) {
-            setData((prev) => prev.map((item) => (item.id === newItem.id ? { ...newItem, ...createdRecord } : item)));
-          }
+        if (!res.ok) {
+          let errMsg = `Failed to create record (HTTP ${res.status})`;
+          try {
+            const errJson = await res.json();
+            if (errJson.message) errMsg = errJson.message;
+            else if (errJson.error) errMsg = errJson.error;
+          } catch {}
+          throw new Error(errMsg);
         }
+
+        // 4: On success, reconcile state with authoritative server response where available
+        const json = await res.json();
+        const createdRecord =
+          json.patient ||
+          json.appointment ||
+          json.bed ||
+          json.item ||
+          json[dataKey.slice(0, -1)];
+
+        setData((prev) => {
+          const next = prev.map((item) =>
+            item.id === newItem.id ? { ...newItem, ...(createdRecord || {}) } : item
+          );
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem(`dronagiri_api_cache_${dataKey}`, JSON.stringify(next));
+            } catch (e) {
+              console.warn(`LocalStorage write error for ${dataKey}:`, e);
+            }
+          }
+          return next;
+        });
+
+        setError(null);
+        return { success: true, data: (createdRecord || newItem) as T };
       } catch (err: any) {
-        console.warn(`[useHmsApi] POST /api/${endpoint} failed (persisted to local cache):`, err.message);
+        const errorMessage = err.message || "Failed to create item on server";
+        console.warn(`[useHmsApi] POST /api/${endpoint} failed, rolling back:`, errorMessage);
+
+        // 5 & 7 & 8: Rollback - surgically remove ONLY the optimistically added item
+        // This preserves any other items added or updated concurrently!
+        setData((prev) => {
+          const rolledBack = prev.filter((item) => item.id !== newItem.id);
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem(`dronagiri_api_cache_${dataKey}`, JSON.stringify(rolledBack));
+            } catch (e) {
+              console.warn(`LocalStorage write error during rollback for ${dataKey}:`, e);
+            }
+          }
+          return rolledBack;
+        });
+
+        // 6: Propagate and display error
+        setError(errorMessage);
+        return { success: false, error: errorMessage };
       }
     },
-    [endpoint, dataKey, data]
+    [endpoint, dataKey]
   );
 
-  // Update existing record via PATCH /api/{endpoint}
+  // Update existing record via PATCH /api/{endpoint} with surgical rollback
   const updateItem = useCallback(
-    async (id: string | number, updatedFields: Partial<T>, patchBody?: Record<string, any>) => {
-      // Optimistic update
-      const updated = data.map((item) => (item.id === id ? { ...item, ...updatedFields } : item));
-      setData(updated);
+    async (
+      id: string | number,
+      updatedFields: Partial<T>,
+      patchBody?: Record<string, any>
+    ): Promise<MutationResult<T>> => {
+      // 1 & 2: Capture previous state of this specific item and apply optimistic update
+      let previousItem: T | undefined;
+
+      setData((prev) => {
+        previousItem = prev.find(
+          (item) =>
+            item.id === id ||
+            (item as any).tokenNo === id ||
+            (item as any).bedNo === id
+        );
+        return prev.map((item) =>
+          item.id === id ||
+          (item as any).tokenNo === id ||
+          (item as any).bedNo === id
+            ? { ...item, ...updatedFields }
+            : item
+        );
+      });
 
       try {
-        await fetch(`/api/${endpoint}`, {
+        // 3: Send API request
+        const res = await fetch(`/api/${endpoint}`, {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders(),
+          },
+          credentials: "same-origin",
           body: JSON.stringify(patchBody || { id, ...updatedFields }),
         });
+
+        if (!res.ok) {
+          let errMsg = `Failed to update record (HTTP ${res.status})`;
+          try {
+            const errJson = await res.json();
+            if (errJson.message) errMsg = errJson.message;
+            else if (errJson.error) errMsg = errJson.error;
+          } catch {}
+          throw new Error(errMsg);
+        }
+
+        // 4: Reconcile with server response if provided
+        try {
+          const json = await res.json();
+          const serverRecord =
+            json.patient ||
+            json.appointment ||
+            json.bed ||
+            json.item ||
+            json[dataKey.slice(0, -1)];
+
+          setData((prev) => {
+            const next = prev.map((item) =>
+              item.id === id ||
+              (item as any).tokenNo === id ||
+              (item as any).bedNo === id
+                ? { ...item, ...(serverRecord || {}) }
+                : item
+            );
+            if (typeof window !== "undefined") {
+              try {
+                localStorage.setItem(`dronagiri_api_cache_${dataKey}`, JSON.stringify(next));
+              } catch (e) {
+                console.warn(`LocalStorage write error for ${dataKey}:`, e);
+              }
+            }
+            return next;
+          });
+        } catch {
+          // If no JSON response, preserve the optimistic update in localStorage
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem(
+                `dronagiri_api_cache_${dataKey}`,
+                JSON.stringify(dataRef.current)
+              );
+            } catch (e) {
+              console.warn(`LocalStorage write error for ${dataKey}:`, e);
+            }
+          }
+        }
+
+        setError(null);
+        return { success: true };
       } catch (err: any) {
-        console.warn(`[useHmsApi] PATCH /api/${endpoint} failed (persisted to local cache):`, err.message);
+        const errorMessage = err.message || "Failed to update item on server";
+        console.warn(`[useHmsApi] PATCH /api/${endpoint} failed, rolling back:`, errorMessage);
+
+        // 5 & 7 & 8: Rollback ONLY this specific item to its previous state
+        if (previousItem) {
+          const orig = previousItem;
+          setData((prev) => {
+            const rolledBack = prev.map((item) =>
+              item.id === id ||
+              (item as any).tokenNo === id ||
+              (item as any).bedNo === id
+                ? orig
+                : item
+            );
+            if (typeof window !== "undefined") {
+              try {
+                localStorage.setItem(`dronagiri_api_cache_${dataKey}`, JSON.stringify(rolledBack));
+              } catch (e) {
+                console.warn(`LocalStorage write error during rollback for ${dataKey}:`, e);
+              }
+            }
+            return rolledBack;
+          });
+        }
+
+        // 6: Propagate and display error
+        setError(errorMessage);
+        return { success: false, error: errorMessage };
       }
     },
-    [endpoint, data]
+    [endpoint, dataKey]
   );
 
   return {

@@ -5,9 +5,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authenticateRequest } from "@/lib/auth";
+import { authorizeRole } from "@/lib/rbac";
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request);
+    if (auth.error) return auth.error;
+
     const { searchParams } = new URL(request.url);
     const department = searchParams.get("department");
     const availability = searchParams.get("availability");
@@ -31,6 +36,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const {
       userId, staffId, name, specialization, experienceYears,

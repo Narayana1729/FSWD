@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { EmergencyCase, EmergencySeverity } from "@/lib/hms-data";
+import { getAuthHeaders } from "@/hooks/use-hms-api";
 
 interface EmergencyViewProps {
   emergencyCases: EmergencyCase[];
@@ -50,7 +51,11 @@ export function EmergencyView({ emergencyCases, onAddEmergencyCase }: EmergencyV
     try {
       const res = await fetch("/api/ambulances", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({
           ambulanceId: "AMB-01",
           availability: "On Dispatch",
@@ -85,7 +90,11 @@ export function EmergencyView({ emergencyCases, onAddEmergencyCase }: EmergencyV
     try {
       const res = await fetch("/api/emergency/admit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({
           emergencyCaseId: emgCase.id,
           bedNo: emgCase.severity === "RED" ? "ICU-03" : "GEN-302",
@@ -131,7 +140,11 @@ export function EmergencyView({ emergencyCases, onAddEmergencyCase }: EmergencyV
     try {
       const res = await fetch("/api/emergency", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({
           patientName: c.patientName,
           age: c.age,

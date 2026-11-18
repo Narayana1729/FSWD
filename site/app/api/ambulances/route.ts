@@ -5,9 +5,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authenticateRequest } from "@/lib/auth";
+import { authorizeRole } from "@/lib/rbac";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request);
+    if (auth.error) return auth.error;
+
     const ambulances = await prisma.ambulance.findMany({
       include: {
         trips: {
@@ -26,6 +31,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { action, ambulanceId, patientName, pickupAddress, destination, etaMins } = body;
 
@@ -92,6 +100,9 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { id, ambulanceId, availability, location, fuelLevelPct, driverName, etaMins, emergencyCaseId, patientName, pickupAddress, destination } = body;
 

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { StaffMember } from "@/lib/hms-data";
+import { getAuthHeaders } from "@/hooks/use-hms-api";
 
 interface StaffHRViewProps {
   staff?: StaffMember[];
@@ -106,7 +107,11 @@ export function StaffHRView({ staff, onUpdateStaff }: StaffHRViewProps = {}) {
     try {
       await fetch("/api/staff", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        credentials: "same-origin",
         body: JSON.stringify({
           name,
           role,

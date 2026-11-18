@@ -51,6 +51,9 @@ export default function AuthSwitch({ onLoginSuccess, onClose }: AuthSwitchProps)
   const [remember, setRemember] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
 
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const roles = [
     {
       id: "Doctor",
@@ -94,14 +97,43 @@ export default function AuthSwitch({ onLoginSuccess, onClose }: AuthSwitchProps)
     setEmail(r.email);
     setName(r.name);
     setDepartment(r.dept);
+    setAuthError(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (onLoginSuccess) {
-      onLoginSuccess(selectedRole, name);
+    setIsSubmitting(true);
+    setAuthError(null);
+
+    try {
+      const loginPassword = password === "••••••••••••" ? "Password123!" : password;
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: loginPassword }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Authentication failed");
+      }
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem("hms_auth_token", data.token);
+        localStorage.setItem("hms_auth_user", JSON.stringify(data.user));
+      }
+
+      if (onLoginSuccess) {
+        onLoginSuccess(data.user.role || selectedRole, data.user.name || name);
+      }
+    } catch (err: any) {
+      console.error("Auth error:", err);
+      setAuthError(err.message || "Failed to sign in. Please check credentials.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
+
 
   return (
     <div
@@ -313,13 +345,21 @@ export default function AuthSwitch({ onLoginSuccess, onClose }: AuthSwitchProps)
                 </label>
               </div>
 
+              {authError && (
+                <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
+                  {authError}
+                </div>
+              )}
+
               {/* Primary CTA Matching Landing Page Button */}
               <button
                 type="submit"
-                className="w-full py-3 bg-[#111] hover:bg-[#333] active:scale-[0.99] text-white rounded-xl text-xs font-semibold tracking-wider uppercase transition-all shadow-md flex items-center justify-center gap-2 mt-3"
+                disabled={isSubmitting}
+                className="w-full py-3 bg-[#111] hover:bg-[#333] active:scale-[0.99] disabled:opacity-50 text-white rounded-xl text-xs font-semibold tracking-wider uppercase transition-all shadow-md flex items-center justify-center gap-2 mt-3"
               >
-                <span>SIGN IN →</span>
+                <span>{isSubmitting ? "AUTHENTICATING..." : "SIGN IN →"}</span>
               </button>
+
 
               {/* Sign In / Register Mode Switch */}
               <div className="text-center pt-2">

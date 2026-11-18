@@ -31,6 +31,9 @@ model User {
   patient       Patient?
   auditLogs     AuditLog[]
   sessions      Session[]
+  tasksAcknowledged TaskTicket[]      @relation("TaskAcknowledgedBy")
+  tasksResolved     TaskTicket[]      @relation("TaskResolvedBy")
+  notificationJobs  NotificationJob[]
 }
 
 model Session {
@@ -107,6 +110,7 @@ model Patient {
   invoices         Invoice[]
   labOrders        LabOrder[]
   radiologyOrders  RadiologyOrder[]
+  tasks            TaskTicket[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +146,7 @@ model Doctor {
   radiologyOrders  RadiologyOrder[]
   surgeries        Surgery[]      @relation("LeadSurgeon")
   beds             Bed[]
+  assignedTasks    TaskTicket[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -672,4 +677,99 @@ model AuditLog {
   timestamp DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 24. CLOSED-LOOP CLINICAL TASK & NOTIFICATION OUTBOX
+// ─────────────────────────────────────────────────────────────────────────────
+
+model TaskTicket {
+  id                 String    @id @default(cuid())
+  ticketNo           String    @unique // e.g. TASK-8801
+  patientId          String
+  sourceType         String    // LAB_CRITICAL, NURSE_HANDOVER, CODE_BLUE, MED_RECONCILIATION
+  sourceId           String?   // e.g. LabResult.id or LabOrder.id
+  title              String
+  description        String
+  criticalValueJson  String?   // JSON: { parameter: "Potassium", value: "6.8", unit: "mEq/L", thresholdLabel: "< 2.8 or > 6.0 mEq/L" }
+  severity           String    @default("CRITICAL") // CRITICAL, URGENT, ROUTINE
+  status             String    @default("OPEN")     // OPEN, ACKNOWLEDGED, IN_PROGRESS, RESOLVED, CANCELLED
+  
+  escalationLevel    Int       @default(1)          // 1: Attending Doctor, 2: Duty RMO, 3: HOD / Admin
+  assignedDoctorId   String?
+  assignedRole       String    @default("DOCTOR")   // Role authorized to claim
+  
+  // Timestamps and Accountability
+  escalationDeadline DateTime  // When SLA expires if unacknowledged
+  acknowledgedAt     DateTime?
+  acknowledgedById   String?
+  resolvedAt         DateTime?
+  resolvedById       String?
+  resolutionNotes    String?
+  cancellationReason String?
+  
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // Relational Integrity
+  patient            Patient   @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  assignedDoctor     Doctor?   @relation(fields: [assignedDoctorId], references: [id], onDelete: SetNull)
+  acknowledgedBy     User?     @relation("TaskAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+  resolvedBy         User?     @relation("TaskResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  notifications      NotificationJob[]
+
+  @@index([status, escalationDeadline])
+  @@index([patientId, status])
+  @@index([sourceType, sourceId])
+}
+
+model NotificationJob {
+  id                 String    @id @default(cuid())
+  jobId              String    @unique // e.g. NOTIF-2041
+  taskId             String
+  idempotencyKey     String    @unique // notif-${taskId}-tier${escalationLevel}-${channel}
+  recipientUserId    String
+  recipientPhone     String?
+  recipientEmail     String?
+  channel            String    // IN_APP_PUSH, SIMULATED_SMS, WARD_CONSOLE
+  payloadJson        String    // Serialized alert payload
+  status             String    @default("PENDING") // PENDING, PROCESSING, SENT, DELIVERED, FAILED, PERMANENTLY_FAILED
+  
+  attemptsCount      Int       @default(0)
+  maxRetries         Int       @default(3)
+  nextRetryAt        DateTime?
+  lockedAt           DateTime? // Timestamp when claimed by worker (for stale job recovery)
+  sentAt             DateTime?
+  deliveredAt        DateTime?
+  failedAt           DateTime?
+  lastError          String?
+  
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // Relational Integrity
+  task               TaskTicket @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  recipient          User       @relation(fields: [recipientUserId], references: [id], onDelete: Restrict)
+  attempts           DeliveryAttempt[]
+
+  @@index([status, nextRetryAt])
+  @@index([taskId, status])
+  @@index([status, lockedAt])
+}
+
+model DeliveryAttempt {
+  id                   String    @id @default(cuid())
+  jobId                String
+  attemptNumber        Int
+  channel              String
+  status               String    // SUCCESS, TEMPORARY_FAILURE, PERMANENT_FAILURE
+  providerMessageId    String?   // Carrier/Gateway Reference ID
+  providerResponseCode String?
+  rawProviderResponse  String?
+  latencyMs            Int?
+  attemptedAt          DateTime  @default(now())
+
+  notificationJob      NotificationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, attemptNumber])
 }

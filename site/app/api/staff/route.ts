@@ -5,9 +5,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { authorizeRole } from "@/lib/rbac";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN");
+    if (auth.error) return auth.error;
     const staff = await prisma.staff.findMany({
       orderBy: { createdAt: "desc" },
     });
@@ -20,6 +23,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeRole(request, "ADMIN");
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { name, role, dept, shift, salary } = body;
 
